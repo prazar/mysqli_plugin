@@ -1,0 +1,152 @@
+<?php
+######################################
+#### MAIN DB CLASS
+#
+#
+
+class db {
+
+	static $db_param = array();
+
+	// CHECK IF IS CONNECTED
+	public static function connected(){
+		return @$GLOBALS["db_param"]["last_conn"]->errno === 0;
+	}
+
+	// public static function real_escape_string($string='') {
+	// 	return mysqli_real_escape_string(,$string);
+	// }
+
+
+	// CONNECTING and SAVING CONNECTION as last connection.
+	public static function connect($host, $user, $pass, $db){
+
+		@mysqli_close($GLOBALS["db_param"]["last_conn"]);
+
+		$conn = mysqli_connect($host, $user, $pass, $db);
+
+		mysqli_query($conn, "SET NAMES 'utf8'");
+
+		mysqli_query($conn, 'set character_set_client="utf8"');
+
+		mysqli_query($conn, 'set collation_connection="utf8_unicode_ci"');
+
+		mysqli_query($conn, "SET @@SQL_MODE = 'STRICT_ALL_TABLES'");
+
+		$resSelTimeShift = mysqli_query($conn, "SELECT value FROM _settings WHERE name='timeShift' LIMIT 1");
+
+		if (mysqli_num_rows($resSelTimeShift)>0)  {
+			$rowSelTimeShift = mysqli_fetch_assoc($resSelTimeShift);
+			$TimeShiftVal    = $rowSelTimeShift['value'];
+		}
+		else {
+			$TimeShiftVal = "+3:00";	
+		}
+
+		mysqli_query($conn, "SET time_zone = `$TimeShiftVal`;");
+
+		$GLOBALS["db_param"]["last_conn"] = $conn;
+		
+		return $conn;
+	}
+
+	public static function request_connection(){
+		global $mainDB;
+		if (self::connected() or self::connect( $mainDB['host'],
+									            $mainDB['user'], 
+									            $mainDB['password'], 
+									            $mainDB['dbname'] )) return true; else return false;
+	}
+
+	// QUERY with AUTODETECTING CONNECTION and CALLBACK.
+	public static function query($sql=null, $callback=null){
+		// IF USED query(function(){...});
+		if (is_callable($sql) || count(func_get_args()) == 0){
+			$sql = $GLOBALS["db_param"]["last_query_wait"][0];
+		}
+		
+		$q = @mysqli_query($GLOBALS["db_param"]["last_conn"], $sql);
+
+		// if query is INSERT.
+		if (substr($sql, 0, 7) == "INSERT "){
+			$return = $GLOBALS["db_param"]["last_conn"]->insert_id;
+		} else
+
+		// if query is SELECT.
+		if (substr($sql, 0, 7) == "SELECT "){
+	   		if (mysqli_num_rows($q) > 0){$data = array(); while ($row = @mysqli_fetch_assoc($q)){
+	   			$return[] = $row;}
+	   		} else {
+	   			$return = false;
+	   		}
+		} 
+
+		// if query is not SELECT or INSERT.
+		else { $return = $q; }
+
+		// CALLBACK (return, original_query_return).
+		if (isset($callback)){
+			$callback($return, $q);
+		}
+
+		return $return;
+	}
+
+	public static function returnLastError() {
+		$conn = $GLOBALS["db_param"]["last_conn"];
+		return (mysqli_error($conn));
+	}
+
+	public static function query_wait($query){
+		$GLOBALS["db_param"]["last_query_wait"] 	   = array($query);
+		$GLOBALS["db_param"]["last_query_wait_static"] = array($query);
+		return array($query);
+	}
+
+	public static function queryWrite(){
+		$args = func_get_args();
+		if (is_array($args[0]) && array_key_exists(0, $args[0])){
+			$splited = explode('$?', $args[0][0]);
+			unset($args[0]);
+			foreach ($args as $i => $value){
+				if (is_array($value) && !array_key_exists(0, $value)){
+					$array = $value;
+				    $_keys   = '(';
+					$_values = '(';
+				    foreach ($array as $key => $value){
+				        if (is_string($value)) $value = "'".mysqli_real_escape_string($GLOBALS["db_param"]["last_conn"], $value)."'";
+				        $_keys   .= "`$key`, ";
+				        $_values .= "$value, ";
+				    }
+				    $_keys   = preg_replace("/\, $/", ')', $_keys);
+				    $_values = preg_replace("/\, $/", ')', $_values);
+				    $value = "$_keys VALUES $_values";
+				}
+				array_splice($splited, $i+$i-1, 0, $value);
+			}
+		} else {
+			$splited = explode('$?', $GLOBALS["db_param"]["last_query_wait_static"][0]);
+			foreach ($args as $i => $value) {
+				if (is_array($value) && !array_key_exists(0, $value)){
+					$array = $value;
+				    $_keys   = '(';
+					$_values = '(';
+				    foreach ($array as $key => $value){
+				        if (is_string($value)) $value = "'".mysqli_real_escape_string($GLOBALS["db_param"]["last_conn"], $value)."'";
+				        $_keys   .= "`$key`, ";
+				        $_values .= "$value, ";
+				    }
+				    $_keys   = preg_replace("/\, $/", ')', $_keys);
+				    $_values = preg_replace("/\, $/", ')', $_values);
+				    $value = "$_keys VALUES $_values";
+				}
+				array_splice($splited, $i+$i+1, 0, $value);
+			}
+		}
+		$GLOBALS["db_param"]["last_query_wait"][0] = implode('', $splited);
+		return implode('', $splited);
+	}
+
+}
+
+?>
